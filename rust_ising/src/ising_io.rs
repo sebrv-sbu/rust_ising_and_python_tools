@@ -176,7 +176,7 @@ pub fn from_ising_file_disjoint_simple(path: impl AsRef<Path>) ->
     .expect("error reading line");
   let t = line.trim();
   let t = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"))
-    .unwrap();
+    .unwrap_or(t);
   let seed = u64::from_str_radix(t, 16).unwrap();
   
 
