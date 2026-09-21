@@ -11,7 +11,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::io::{Write,BufWriter};
 use bitvec::prelude::*;
-use anyhow::Result;
+use anyhow::{Result, ensure};
 
 #[derive(Parser)]
 #[command(about = "Implementation of High Temperature Simulated \
@@ -21,6 +21,8 @@ struct Args{
   #[command(subcommand)]
   mode: Mode,
 }
+
+
 
 #[derive(Subcommand)]
 enum Mode{
@@ -75,6 +77,26 @@ enum Mode{
     #[arg(short='w', long="modify_input_file", action=ArgAction::SetTrue)]
     modify_input_file:bool,
   },
+  #[command(about="Generate Ising Files according to Specifications")]
+  GenFile{ 
+    n:usize,
+    dim:usize,
+    sizes:Vec<usize>,
+    #[arg(short = 'o', long="all_ones", action=ArgAction::SetTrue)]
+    all_ones:bool,
+    #[arg(short = 'e', long="edge_dist", default_value="normal:0.0,1.0")]
+    edge_dist:Dist,
+    #[arg(short = 'f', long="magnetic_field", default_value="normal:0.0,1.0")]
+    field_dist:Dist,
+    #[arg(short = 'm', long="external_field", default_value="normal:0.0,1.0")]
+    ext_dist:Dist,
+    #[arg(short = 's', long = "write_seed", default_value=None)]
+    seed_opt:Option<u64>,
+    #[arg(short = 'T', long = "temperature", default_value = "1.0")]
+    temperature:f64,
+    #[arg(long = "file_seed", default_value=None)]
+    file_seed_opt:Option<u64>,
+  }
 }
 
 fn finite_temperature_option<I:Ising>(
@@ -175,10 +197,51 @@ Error:could not create new stationary file");
 fn main() -> Result<()>{
   let args = Args::parse();
   let input_file = args.input_file;
+
+  if let Mode::GenFile{
+      n, dim, sizes,
+      all_ones, 
+      edge_dist, field_dist, ext_dist, 
+      seed_opt, temperature, file_seed_opt 
+  } = args.mode
+  {
+    if all_ones{
+      eprintln!("Warning: -o, --all_ones will ignore all distribution flags.");
+    }
+    let ising: IsingModels = if all_ones{ 
+     IsingModels::AllDownAllOnesGroundState 
+    } else { IsingModels::EA{edge: edge_dist, mag:field_dist, ext:ext_dist} };
+    ensure!(sizes.len() == dim, "dimension and sizes must have the same length"
+      );
+    ensure!(
+      *(&sizes.iter().product::<usize>()) == n,
+      "product of sizes ({}) must equal the number of nodes ({n})",
+      sizes.iter().product::<usize>(),
+    );
+    let sizes: Box<[usize]> = sizes.into_boxed_slice();
+    let seed = seed_opt.unwrap_or_else(rand::random);
+    let ising_spec = generate_ising_file_specifiers(
+    ising,
+    dim,
+    n,
+    seed)?;
+    let file_seed = file_seed_opt.unwrap_or_else(rand::random);
+    generate_ising_file(
+      input_file,
+      ising_spec,
+      temperature,
+      file_seed,
+      dim,
+      sizes)?;
+    return Ok(());
+    }
+
+
   let (mut ising_model, temperature_from_file, ground_state_opt) =
     from_ising_file_disjoint_simple(
     &input_file
   );
+   
   match args.mode{
     Mode::Inf{stationary_file_name, max_steps, runs, ground_state_provided} 
     => {
@@ -305,10 +368,18 @@ fn main() -> Result<()>{
       if modify_input_file{
         write_ground_state(config_str, input_file)?;
       }
+    },
+    Mode::GenFile{
+      n, dim, sizes,
+      all_ones, 
+      edge_dist, field_dist, ext_dist, 
+      seed_opt, temperature, file_seed_opt
     }
+    => {
+      eprintln!("What?");
+    },
   }
   Ok(())
 }
-
 
 

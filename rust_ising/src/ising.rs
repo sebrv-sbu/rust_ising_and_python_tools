@@ -1,7 +1,8 @@
 use std::env;
 include!(concat!(env!("OUT_DIR"),"/dim.rs"));
 include!(concat!(env!("OUT_DIR"),"/weights.rs"));
-use rand::RngExt;
+use rand::{SeedableRng, RngExt};
+use rand_pcg::Pcg64Mcg;
 use bitvec::prelude::*;
 
 macro_rules! weight_coord_base {
@@ -30,9 +31,11 @@ pub trait Ising{
     ground_center_opt:Option<bool>) -> f64;
  }
 
+
+
 enum Layout {Disjoint, Packed}
 
-enum IsingModel{
+enum IsingRepresentations{
   Disjoint(IsingDisjoint),
 // Packed(IsingPacked),
 }
@@ -47,11 +50,13 @@ pub struct IsingEdge {
   pub weight: f64,
 }
 
+#[derive(Debug)]
 pub struct StartingConfig{
   pub config:BitVec,
   pub weight:f64
 }
 
+#[derive(Debug)]
 pub struct IsingDisjoint {
   pub deg: usize,
   sizes: Vec<usize>,
@@ -60,22 +65,24 @@ pub struct IsingDisjoint {
   edges: Vec<IsingEdge>,
   magnetic_field:Vec<f64>,
   pub cost: f64,
-  starting_configs: Option<Vec<StartingConfig>>
+  starting_configs: Option<Vec<StartingConfig>>,
+  random_number_generator: Pcg64Mcg
 }
 
 
 
 impl IsingDisjoint {
-  pub fn new(dim:usize, sizes:Vec<usize>) -> Self{
-    let n_points = sizes.iter()
-      .fold(1, |prod, size| prod * size);
+  pub fn new(dim:usize, sizes:Vec<usize>, seed:u64) -> Self{
+    let n_points = sizes.iter().product();
     let cost = 0.0;
     let magnetic_field= Vec::<f64>::new();
     let spins = BitVec::new();
     let edges = Vec::<IsingEdge>::new();
     let deg = dim*2;
+    let random_number_generator=Pcg64Mcg::seed_from_u64(seed);
     IsingDisjoint{ deg, sizes, n_points, cost, magnetic_field, spins, edges,
-    starting_configs: None}
+    starting_configs: None,
+    random_number_generator}
   } 
   #[inline(always)]
   fn get_edge(&self, vertex:usize, edge_index: usize) -> &IsingEdge{
@@ -186,7 +193,7 @@ impl IsingDisjoint {
     };
     let sum_floats = configs.iter()
      .fold(0.0, |acc, config| acc + config.weight);
-    let bound = rand::rng().random_range(0.0..sum_floats);
+    let bound = self.random_number_generator.random_range(0.0..sum_floats);
     let mut accumulated_weight = 0.0;
     let mut i = 0;
     while accumulated_weight + configs[i].weight < bound{
@@ -197,7 +204,7 @@ impl IsingDisjoint {
   } 
   fn init_spins_unif(&mut self){
     self.spins = (0..self.n_points)
-      .map(|_| rand::rng().random_bool(0.5))
+      .map(|_| self.random_number_generator.random_bool(0.5))
       .collect();
   }
   fn set_spins(&mut self, spins:BitVec){
@@ -220,9 +227,10 @@ impl IsingDisjoint {
     2.0 * (interaction_diff + mag_diff)
   }
   fn anneal_disjoint(&mut self, temp:f64) {
-    let node:usize = rand::rng().random_range(0..self.n_points);
+    let node:usize = self.random_number_generator
+      .random_range(0..self.n_points);
     let delta = self.cost_diff_disjoint(node);
-    if delta < 0.0 || (-delta / temp).exp() > rand::rng()
+    if delta < 0.0 || (-delta / temp).exp() > self.random_number_generator
       .random_range(0.0..1.0) {
       let flipped = !self.spins[node];
       self.spins.set(node, flipped);
@@ -230,7 +238,8 @@ impl IsingDisjoint {
       }  
   }
   fn inf_anneal_disjoint(&mut self){
-    let node:usize = rand::rng().random_range(0..self.n_points);
+    let node:usize = self.random_number_generator
+      .random_range(0..self.n_points);
     let delta = self.cost_diff_disjoint(node);
     let flipped = !self.spins[node];
     self.spins.set(node, flipped);

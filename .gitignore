@@ -17,3 +17,10 @@ venv/
 *.egg-info/
 testing/
 run_ising_bench.py
+
+# scratch / test output
+python_tools/shit_file
+python_tools/shitfile
+python_tools/ising_input.txt
+python_tools/testing_2/
+python_tools/debug_gauge.py

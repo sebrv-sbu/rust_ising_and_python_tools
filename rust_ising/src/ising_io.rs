@@ -4,6 +4,11 @@ use crate::ising::*;
 use std::fs::File;
 use bitvec::prelude::*;
 use anyhow::{Context, Result};
+use rand::{SeedableRng, prelude::*};
+use rand_distr::{Normal, Uniform};
+use rand_pcg::Pcg64Mcg;
+use std::fs::OpenOptions;
+
 
  macro_rules! local_index { 
   ($rel_index:expr) => 
@@ -11,7 +16,124 @@ use anyhow::{Context, Result};
     if $rel_index % 2 == 0 { $rel_index + 1 } else { $rel_index - 1 }
     )}
  }
+pub struct IsingSpecifiers{
+  edges: Box<[f64]>,
+  field: Box<[f64]>, 
+  ext_field: f64
+}
 
+struct EdwardsAnderson<E, M, X>
+  where 
+    E:Distribution<f64>,
+    M:Distribution<f64>,
+    X:Distribution<f64>
+    {
+  edge_dist:E,
+  magnetic_dist:M,
+  ext_magnetic_dist:X,
+}
+
+pub enum IsingModels{
+  EA{edge: Dist, mag: Dist, ext: Dist},
+  AllDownAllOnesGroundState,
+}
+
+#[derive(Clone, Copy)]
+pub enum Dist {
+  Normal{ mu: f64, std_dev: f64 },
+  Uniform{ low: f64, high: f64},
+}
+
+impl std::str::FromStr for Dist {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        let (kind, params) = s.split_once(':').ok_or("expected KIND:A,B")?;
+        let nums: Vec<f64> = params
+            .split(',')
+            .map(|p| p.trim().parse::<f64>().map_err(|e| e.to_string()))
+            .collect::<Result<_, _>>()?;
+        match (kind.to_lowercase().as_str(), nums.as_slice()) {
+            ("normal", [mu, sd]) => Ok(Dist::Normal { mu: *mu, std_dev: *sd }),
+            ("uniform", [lo, hi]) => Ok(Dist::Uniform { low: *lo, high: *hi }),
+            _ => Err(format!("bad distribution spec: {s}")),
+        }
+    }
+}
+
+trait GenerateWeights{
+  fn generate_edge_weights<R: Rng + ?Sized>
+    (&self, n:usize, d:usize, rng: &mut R) -> Box<[f64]>;
+  fn generate_magnetic_fields<R: Rng + ?Sized>
+    (&self, n:usize, rng: &mut R) -> Box<[f64]>;
+  fn generate_ext_magnetic_field<R: Rng + ?Sized>
+    (&self, rng: &mut R) -> f64;
+}
+
+impl<E, M, X> EdwardsAnderson<E, M, X>
+where
+    E: Distribution<f64>,
+    M: Distribution<f64>,
+    X: Distribution<f64>,
+{
+    fn new(edge_dist: E, magnetic_dist: M, ext_magnetic_dist: X) -> Self {
+        Self { edge_dist, magnetic_dist, ext_magnetic_dist }
+    }
+}
+
+
+pub enum Sampler{
+  Normal(Normal<f64>),
+  Uniform(Uniform<f64>)
+}
+
+impl Distribution<f64> for Sampler{
+  fn sample <R: Rng + ?Sized>(&self, rng: &mut R) -> f64{
+    match self{
+      Sampler::Normal(d) => d.sample(rng),
+      Sampler::Uniform(d) => d.sample(rng)
+    }
+  }
+}
+
+impl Dist {
+  pub fn build(&self) -> Result<Sampler> {
+    match *self {
+      Dist::Normal { mu, std_dev } => Normal::new(mu, std_dev)
+        .map(Sampler::Normal)
+        .with_context(|| format!("invalid Normal(mu={mu}, std_dev={std_dev})")),
+      Dist::Uniform { low, high } => Uniform::new(low, high)
+        .map(Sampler::Uniform)
+        .with_context(|| format!("invalid Uniform(low={low}, high={high})")),
+    }
+  }
+}
+
+
+
+impl<E, M, X> GenerateWeights for EdwardsAnderson<E,M,X>
+where
+    E: Distribution<f64>,
+    M: Distribution<f64>,
+    X: Distribution<f64>, 
+  {
+  fn generate_edge_weights<R: Rng + ?Sized>
+    (&self, n:usize, d:usize, mut rng: &mut R)-> Box<[f64]>{
+    let n_edges = d*n;
+    (&self.edge_dist).sample_iter(&mut rng)
+      .take(n_edges)
+      .collect()
+  }
+  fn generate_magnetic_fields<R: Rng + ?Sized>
+    (&self, n:usize, mut rng: &mut R) -> Box<[f64]>{
+      (&self.magnetic_dist).sample_iter(&mut rng)
+      .take(n)
+      .collect()
+  }
+  fn generate_ext_magnetic_field<R: Rng + ?Sized>
+    (&self, mut rng: &mut R) -> f64{
+      (&self).ext_magnetic_dist.sample(&mut rng)
+  }
+}
 
 pub fn from_ising_file_disjoint_simple(path: impl AsRef<Path>) -> 
 (IsingDisjoint, f64, Option<BitVec>)
@@ -42,6 +164,25 @@ pub fn from_ising_file_disjoint_simple(path: impl AsRef<Path>) ->
 
   for line in lines.by_ref(){
     let line = line.unwrap();
+    if line.starts_with("$rng_seed"){
+      in_section = true;
+      break
+    }
+  }
+  assert!(in_section, "Could not find rng_seed");
+  let line = lines.by_ref()
+    .next()
+    .expect("Could not find seed")
+    .expect("error reading line");
+  let t = line.trim();
+  let t = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"))
+    .unwrap();
+  let seed = u64::from_str_radix(t, 16).unwrap();
+  
+
+
+  for line in lines.by_ref(){
+    let line = line.unwrap();
     if line.starts_with("$dim_sizes"){
       in_section = true;
       break
@@ -64,7 +205,7 @@ pub fn from_ising_file_disjoint_simple(path: impl AsRef<Path>) ->
       .parse().expect("Error parsing sizes");
     sizes.push(length);
   }
-  ising_instance = IsingDisjoint::new(dim, sizes);
+  ising_instance = IsingDisjoint::new(dim, sizes, seed);
   in_section = false;
   for line in lines.by_ref(){
     let line = line.unwrap();
@@ -348,4 +489,78 @@ pub fn bitvec_to_hex_string(bv: &BitVec) -> String{
    .map(|byte| format!("{:02x}", byte))
    .collect::<Vec<String>>()
    .join(" ")
+}
+
+
+pub fn generate_ising_file_specifiers(
+  model:IsingModels,
+  dim:usize,
+  n:usize,
+  seed: u64
+  ) -> Result<IsingSpecifiers>{
+   match model{ 
+    IsingModels::EA { edge, mag, ext} => {
+      let mut rng = Pcg64Mcg::seed_from_u64(seed);
+      let ea = EdwardsAnderson::new(
+        edge.build()?,
+        mag.build()?,
+        ext.build()?
+      );
+      let edges = ea.generate_edge_weights(n, dim, &mut rng);
+      let field = ea.generate_magnetic_fields(n, &mut rng);
+      let ext_field = ea.generate_ext_magnetic_field(&mut rng);
+      Ok(IsingSpecifiers { edges, field, ext_field })
+  }
+  IsingModels::AllDownAllOnesGroundState => {
+    Ok(IsingSpecifiers{
+    edges: (0..n*dim)
+      .map(|_| 1.0)
+      .collect(),
+    field: (0..n)
+      .map(|_| -1.0)
+      .collect(),
+    ext_field: 1.0,
+    })
+    }
+  }
+}
+
+pub fn generate_ising_file(
+  path: impl AsRef<Path>,
+  specs:IsingSpecifiers,
+  temp: f64,
+  rng_seed: u64,
+  dim: usize,
+  sizes: Box<[usize]>
+  ) -> Result<()>
+{
+  let file = OpenOptions::new()
+    .write(true)
+    .create_new(true)
+    .open(path)?;
+
+  let mut writer = BufWriter::new(file);
+  writeln!(writer, "$temp")?;
+  writeln!(writer, "{temp}\n")?;
+  writeln!(writer, "$rng_seed")?;
+  writeln!(writer, "{:x}\n", rng_seed)?;
+  writeln!(writer, "$dim_sizes")?;
+  write!(writer, "{dim}")?;
+  for size in sizes{
+    write!(writer, " {size}")?;
+  }
+  writeln!(writer, "\n")?;
+  writeln!(writer, "$edge_weights_start")?;
+  for edge in specs.edges{
+    writeln!(writer, "{edge}")?;
+  }
+  writeln!(writer,"")?;
+  writeln!(writer,"$mu")?;
+  writeln!(writer,"{}\n", specs.ext_field)?;
+  writeln!(writer,"$external_magnetic_field")?;
+  for magnet in specs.field{
+    writeln!(writer, "{magnet}")?;
+  }
+  writer.flush()?;
+  Ok(())
 }
