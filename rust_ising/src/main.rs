@@ -121,7 +121,9 @@ fn run_mode<I:Ising + std::fmt::Debug>(args: Args) -> Result<()>{
     temperature_from_file,
     ground_state_opt,
     local_state_opt) = from_ising_file::<I>( input_file )?;
+  #[cfg(debug_assertions)]{
   println!("{:#?}", ising_model);   // pretty-printed with indentation
+  }
   match args.mode{
     Mode::Inf{stationary_file_name, max_steps, runs, ground_state_provided} 
     => {

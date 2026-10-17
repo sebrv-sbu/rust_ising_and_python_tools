@@ -361,9 +361,11 @@ impl IsingPacked{
             let edge = self.get_edge(node, neighbour_idx);
             let sign = (1 - 2 * ((spin_home == self.get_spin(neighbour))
                 as i32 )) as f64;
+            #[cfg(debug_assertions)]{
             eprintln!("weight {} {} = {}", node, neighbour, edge);
             eprintln!("neighbour spin = {}, my spin = {}", 
               self.get_spin(neighbour), spin_home);
+            }
             local_weight + sign * edge
           });
         cost
@@ -528,9 +530,11 @@ impl IsingDisjoint {
             let edge = self.get_edge(node, neighbour_idx);
             let sign = (1 - 2 * ((self.spins[edge.neighbour] == spin_home) 
                 as i32))as f64;
+            #[cfg(debug_assertions)]{
             eprintln!("weight {} {} = {}", node, edge.neighbour, edge.weight);
             eprintln!("neighbour spin = {}, my spin = {}", 
               self.spins[edge.neighbour], spin_home);
+            }
             local_weight + (sign * edge.weight)
           });
 
