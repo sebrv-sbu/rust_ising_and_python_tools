@@ -1,17 +1,20 @@
 use crate::ising::*;
 use bitvec::prelude::*;
+use anyhow::{bail, Result};
+
+const RECORD_EPS: f64 = 1e-9;
 
 pub fn stationary_infinite_temperature_optimise<I:Ising>(
   ising: &mut I,
   max_steps:usize) -> (BitVec, f64, usize){
   let mut step = 0;
   (0..max_steps).fold(
-    (ising.config().clone(), ising.cost(),0),
+    (ising.config_to_bitvec(), ising.cost(),0),
     |(min_conf, min_cost, hit), _|{
       ising.inf_anneal();
       step += 1;
-      if ising.cost() < min_cost{
-        (ising.config().clone(), ising.cost(), step)
+      if ising.cost() < min_cost - RECORD_EPS{
+        (ising.config_to_bitvec(), ising.cost(), step)
       } else {
         (min_conf, min_cost, hit)
       }
@@ -24,21 +27,21 @@ pub fn stationary_infinite_temperature_hit<I:Ising>(
   max_steps:usize) -> Option<usize>{
   let mut hitting_time = 0;
   while hitting_time < max_steps{
-    if ground_state == ising.config(){
+    if ising.config_eq(ground_state){
       return Some(hitting_time)
     }
     ising.inf_anneal();
     hitting_time += 1;
   }
-  if ground_state == ising.config(){
+  if ising.config_eq(ground_state){
     return Some(hitting_time)
   }
   None
 }
 
-pub fn theoretical_perturbation_naive<I:Ising>(
+pub fn high_temp_theoretical_perturbation_naive<I:Ising>(
   ising: &mut I,
-  ground_state_opt: &Option<BitVec>,
+  ground_state_opt: Option<&BitVec>,
   temperature: f64
   )->(bool, f64){
   /* since $N/2^{2N+1}$ is quite a tiny number, *
@@ -46,23 +49,11 @@ pub fn theoretical_perturbation_naive<I:Ising>(
   let mut sum = 0.0;
   let mut sign = false;
   for node in 0..ising.n_points(){
-    let ground_state_cluster:BitVec;
-    let ground_state_cluster_opt: Option<&Bits>;
-    let ground_state_center:Option<bool>;
-    match ground_state_opt{
-      Some(ground_state) => {
-        let neighbours = ising.neighbours(node);
-        ground_state_cluster = (0..neighbours.len())
-          .map(|i| ground_state[neighbours[i]])
-          .collect();
-        ground_state_cluster_opt = Some(ground_state_cluster.as_bitslice());
-        ground_state_center = Some(ground_state[node]);
-      }
-      None =>{
-      ground_state_cluster_opt = None;
-      ground_state_center = None;
-      }
-    }
+    let ground_state_cluster: Option<BitVec> = 
+      ground_state_opt.map(|gs| {
+        ising.neighbours(node).iter().map(|&nb| gs[nb]).collect()
+      });
+    let ground_state_center:Option<bool> = ground_state_opt.map(|gs| gs[node]);
     let mut node_sum = 0.0;
     for cluster_index in 0 .. 1<<ising.deg(){
       let cluster = &cluster_index.view_bits::<LocalBits>()[..ising.deg()]; 
@@ -70,7 +61,7 @@ pub fn theoretical_perturbation_naive<I:Ising>(
         temperature,
         node,
         cluster,
-        ground_state_cluster_opt,
+        ground_state_cluster.as_deref(),
         ground_state_center);
     }
     #[cfg(debug_assertions)]
@@ -95,12 +86,12 @@ pub fn stationary_finite_temperature_optimise<I:Ising>(
   )->(BitVec, f64, usize){
   let mut step = 0;
   (0..max_steps).fold(
-    (ising.config().clone(), ising.cost(), 0),
+    (ising.config_to_bitvec(), ising.cost(), 0),
     |(min_conf, min_cost, hit), _|{
       ising.anneal(temperature);
       step += 1;
-      if ising.cost() < min_cost{
-        (ising.config().clone(), ising.cost(), step)
+      if ising.cost() < min_cost - RECORD_EPS{
+        (ising.config_to_bitvec(), ising.cost(), step)
       } else {
         (min_conf, min_cost, hit)
       }
@@ -115,13 +106,13 @@ pub fn stationary_finite_temperature_hit<I:Ising>(
 {
   let mut hitting_time = 0;
   while hitting_time < max_steps{
-    if ground_state == ising.config(){
+    if ising.config_eq(ground_state){
       return Some(hitting_time)
     }
     ising.anneal(temperature);
     hitting_time += 1;
   }
-  if ground_state == ising.config(){
+  if ising.config_eq(ground_state){
     return Some(hitting_time)
   }
   None
@@ -129,18 +120,18 @@ pub fn stationary_finite_temperature_hit<I:Ising>(
 
 pub fn approx_num_steps_for_percent<I:Ising>(
   ising: &mut I,
-  percent_opt:Option<f64>,
+  percent:f64,
   temperature_opt:Option<f64>,
-  log_2_perturbation_and_sign_opt: Option<(f64, bool)>,
-  ground_state_opt:&Option<BitVec>,
-  ) -> Result<usize, String>{
+  log_2_perturbation_and_sign_opt: Option<(bool, f64)>,
+  ground_state_opt:Option<&BitVec>,
+  ) -> Result<usize>{
   /* We will have to use some rust things to do this in *
    * a numerically stable way                           */
   let log_2_perturbation:f64;
   let sign:bool;
   if let Some(log_2_perturbation_and_sign) = log_2_perturbation_and_sign_opt{
-    log_2_perturbation = log_2_perturbation_and_sign.0;
-    sign=log_2_perturbation_and_sign.1;
+    sign=log_2_perturbation_and_sign.0;
+    log_2_perturbation = log_2_perturbation_and_sign.1;
     if ground_state_opt.is_some(){
     eprintln!("anneal.rs warning: Ground State provided to \
       approx_num_steps_for_percent is being ignored");
@@ -152,12 +143,12 @@ pub fn approx_num_steps_for_percent<I:Ising>(
   } else {
     match temperature_opt{
       None => {
-      return Err("anneal.rs error: neither log_2_perturbation nor \
+      bail!("anneal.rs error: neither log_2_perturbation nor \
         temperature was provided to approx_num_steps_for_percent. Cannot \
-        compute without at least one of these being present.".to_string());
+        compute without at least one of these being present.");
       }
       Some(temperature) => {
-      (sign, log_2_perturbation)= theoretical_perturbation_naive(
+      (sign, log_2_perturbation)= high_temp_theoretical_perturbation_naive(
       ising,
       ground_state_opt,
       temperature);
@@ -170,9 +161,8 @@ pub fn approx_num_steps_for_percent<I:Ising>(
     *                                                                        *
     * We borrow rust's ln_1p here which is optimized for logarithms of       *
     * numbers close to 1 and then solve.                                     */
-  let percent = percent_opt.unwrap_or(0.25);
   if percent >= 1.0 || percent <= 0.0{
-    return Err(format!("anneal.rs error: percentage {percent} outside [0,1], \
+    bail!(format!("anneal.rs error: percentage {percent} outside [0,1], \
     something must have gone wrong."));
   }
   let log2_1p = |y:f64| y.ln_1p() * std::f64::consts::LOG2_E;
@@ -184,9 +174,72 @@ pub fn approx_num_steps_for_percent<I:Ising>(
 
   let t = log2_fail_target/log2_q;
   if x > 0.0 || x < -1.0 {
-    return Err(format!("anneal.rs error: computed per-step rate x = {x} \
+    bail!(format!("anneal.rs error: computed per-step rate x = {x} \
         outside [0,1] — perturbation may exceed base rate; result may not be \
         physically meaningful."));
   }
   Ok(t as usize)
+}
+
+pub fn low_temp_theoretical_perturbation_naive<I:Ising>(
+  ising:&mut I,
+  local_min_approx:BitVec,
+  temperature:f64
+  )->f64{
+  ising.low_temp_pert(local_min_approx, temperature)
+}
+
+pub fn asymptotic_matching<I:Ising>(
+  ising: &mut I,
+  local_min_approx:BitVec,
+  ground_state_opt: &Option<BitVec>,
+  temperature: f64,
+  ) -> f64{
+  let mut sum = 0.0;
+  let high_temp_weight_func = |energy:f64, temp:f64| 
+      (-energy.abs()/(temp * temp)).exp();
+  let low_temp_weight_func = |energy:f64, temperature:f64| 
+    1.0-high_temp_weight_func(energy, temperature);
+  for node in 0..ising.n_points(){
+    let ground_state_cluster:BitVec;
+    let ground_state_cluster_opt: Option<&Bits>;
+    let ground_state_center:Option<bool>;
+    match ground_state_opt{
+      Some(ground_state) => {
+        let neighbours = ising.neighbours(node);
+        ground_state_cluster = (0..neighbours.len())
+          .map(|i| ground_state[neighbours[i]])
+          .collect();
+        ground_state_cluster_opt = Some(ground_state_cluster.as_bitslice());
+        ground_state_center = Some(ground_state[node]);
+      }
+      None =>{
+      ground_state_cluster_opt = None;
+      ground_state_center = None;
+      }
+    }
+    let mut node_sum = 0.0;
+        for cluster_index in 0 .. 1<<ising.deg(){
+      let cluster = &cluster_index.view_bits::<LocalBits>()[..ising.deg()]; 
+      node_sum += ising.cluster_cost_weighted(
+        temperature,
+        node,
+        cluster,
+        ground_state_cluster_opt,
+        ground_state_center,
+        high_temp_weight_func);
+    }
+    #[cfg(debug_assertions)]
+    println!("node: {}: sum = {}", node, node_sum);
+    sum += node_sum;
+  }
+  if sum < 0.0{
+    sum = -1.0 * sum;
+  }
+  let low_temp_contrib = ising.low_temp_pert_weighted(local_min_approx,
+    temperature,
+    low_temp_weight_func);
+  let high_temp_contrib = (sum*ising.n_points() as f64) / ((ising.n_points() + 
+      1 + ising.deg()) as f64).exp2();
+  1.0 + high_temp_contrib - low_temp_contrib
 }
