@@ -707,7 +707,7 @@ pub fn asymptotic_match_output<I:Ising>(
   } else {
     println!("{}", perturbation);
   }
-  Ok(perturbation)
+  Ok(1.0-perturbation)
 }
 
 pub fn compute_hitting_time_output_high_t<I:Ising>(
