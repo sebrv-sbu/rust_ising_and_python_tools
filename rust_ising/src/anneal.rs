@@ -149,15 +149,14 @@ pub fn approx_num_steps_for_percent<I:Ising>(
     if percent >= 1.0 || percent <= 0.0 {
       bail!(format!("anneal.rs: percentage {percent} outside (0,1)"));
     }
-    let log2_1p = |y:f64| y.ln_1p() * std::f64::consts::LOG2_E;
-    if perturbation > 0.0 || perturbation < -1.0 {
+    if perturbation < 0.0 || perturbation > 1.0 {
       bail!(format!("anneal.rs: computer perturbation = {perturbation} \
           outside of range  [-1, 0] - perturbation may not be physically \
           meaningful"));
     }
-    let log2_q = log2_1p(perturbation);
-    let log2_fail_target = log2_1p(-percent);
-    let t = log2_fail_target / log2_q;
+    let ln_q = (-perturbation).ln_1p();
+    let ln_fail_target = (-percent).ln_1p();
+    let t = ln_fail_target / ln_q;
     Ok(t as usize)
 }
 
