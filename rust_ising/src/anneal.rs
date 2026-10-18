@@ -1,6 +1,6 @@
 use crate::ising::*;
 use bitvec::prelude::*;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 const RECORD_EPS: f64 = 1e-9;
 
@@ -119,12 +119,55 @@ pub fn stationary_finite_temperature_hit<I:Ising>(
 }
 
 pub fn approx_num_steps_for_percent<I:Ising>(
+  ising:&mut I,
+  percent:f64,
+  temperature_opt:Option<f64>,
+  perturbation_opt:Option<f64>,
+  local_min_approx_opt:Option<&BitVec>,
+  ) -> Result<usize> {
+  let perturbation = match perturbation_opt{
+    Some(p) => { p },
+    None => {
+      match temperature_opt {
+        None => {
+          bail!("anneal.rs: neither perturbation nor temperature provided \
+            to approx_num_steps. Cannot compute without at least one of \
+            these being present.");
+        },
+        Some (temperature) => {
+          let local_min_approx = local_min_approx_opt.context("cannot compute \
+            low temperature perturbation for approx_num_steps_for_percent \
+            without a local minimum provided")?;
+          eprintln!("anneal.rs warning: using low temperature perturbation \
+            to compute approximate number of steps needed to attain \
+            perturbation.");
+            ising.low_temp_pert(local_min_approx, temperature)
+          }
+        }
+      }
+    };
+    if percent >= 1.0 || percent <= 0.0 {
+      bail!(format!("anneal.rs: percentage {percent} outside (0,1)"));
+    }
+    let log2_1p = |y:f64| y.ln_1p() * std::f64::consts::LOG2_E;
+    if perturbation > 0.0 || perturbation < -1.0 {
+      bail!(format!("anneal.rs: computer perturbation = {perturbation} \
+          outside of range  [-1, 0] - perturbation may not be physically \
+          meaningful"));
+    }
+    let log2_q = log2_1p(perturbation);
+    let log2_fail_target = log2_1p(-percent);
+    let t = log2_fail_target / log2_q;
+    Ok(t as usize)
+}
+
+pub fn approx_num_steps_for_percent_log_perturbation<I:Ising>(
   ising: &mut I,
   percent:f64,
   temperature_opt:Option<f64>,
   log_2_perturbation_and_sign_opt: Option<(bool, f64)>,
   ground_state_opt:Option<&BitVec>,
-  ) -> Result<usize>{
+  ) -> Result<usize> {
   /* We will have to use some rust things to do this in *
    * a numerically stable way                           */
   let log_2_perturbation:f64;
@@ -143,11 +186,14 @@ pub fn approx_num_steps_for_percent<I:Ising>(
   } else {
     match temperature_opt{
       None => {
-      bail!("anneal.rs error: neither log_2_perturbation nor \
-        temperature was provided to approx_num_steps_for_percent. Cannot \
+      bail!("anneal.rs: neither log_2_perturbation nor \
+        temperature was provided to \
+        approx_num_steps_for_percent_log_perturbation. Cannot \
         compute without at least one of these being present.");
       }
       Some(temperature) => {
+        println!("anneal.rs warning: approx_num_steps_for_percent \
+          with no given perturbation uses the high temperature perturbation.");
       (sign, log_2_perturbation)= high_temp_theoretical_perturbation_naive(
       ising,
       ground_state_opt,
@@ -181,18 +227,10 @@ pub fn approx_num_steps_for_percent<I:Ising>(
   Ok(t as usize)
 }
 
-pub fn low_temp_theoretical_perturbation_naive<I:Ising>(
-  ising:&mut I,
-  local_min_approx:BitVec,
-  temperature:f64
-  )->f64{
-  ising.low_temp_pert(local_min_approx, temperature)
-}
-
 pub fn asymptotic_matching<I:Ising>(
   ising: &mut I,
-  local_min_approx:BitVec,
-  ground_state_opt: &Option<BitVec>,
+  local_min_approx:&BitVec,
+  ground_state: &BitVec,
   temperature: f64,
   ) -> f64{
   let mut sum = 0.0;
@@ -204,35 +242,27 @@ pub fn asymptotic_matching<I:Ising>(
     let ground_state_cluster:BitVec;
     let ground_state_cluster_opt: Option<&Bits>;
     let ground_state_center:Option<bool>;
-    match ground_state_opt{
-      Some(ground_state) => {
-        let neighbours = ising.neighbours(node);
-        ground_state_cluster = (0..neighbours.len())
-          .map(|i| ground_state[neighbours[i]])
-          .collect();
-        ground_state_cluster_opt = Some(ground_state_cluster.as_bitslice());
-        ground_state_center = Some(ground_state[node]);
-      }
-      None =>{
-      ground_state_cluster_opt = None;
-      ground_state_center = None;
-      }
-    }
+    let neighbours = ising.neighbours(node);
+      ground_state_cluster = (0..neighbours.len())
+        .map(|i| ground_state[neighbours[i]])
+        .collect();
+      ground_state_cluster_opt = Some(ground_state_cluster.as_bitslice());
+      ground_state_center = Some(ground_state[node]);
     let mut node_sum = 0.0;
-        for cluster_index in 0 .. 1<<ising.deg(){
-      let cluster = &cluster_index.view_bits::<LocalBits>()[..ising.deg()]; 
-      node_sum += ising.cluster_cost_weighted(
-        temperature,
-        node,
-        cluster,
-        ground_state_cluster_opt,
-        ground_state_center,
-        high_temp_weight_func);
+      for cluster_index in 0 .. 1<<ising.deg(){
+        let cluster = &cluster_index.view_bits::<LocalBits>()[..ising.deg()]; 
+        node_sum += ising.cluster_cost_weighted(
+          temperature,
+          node,
+          cluster,
+          ground_state_cluster_opt,
+          ground_state_center,
+          high_temp_weight_func);
+      }
+      #[cfg(debug_assertions)]
+      println!("node: {}: sum = {}", node, node_sum);
+      sum += node_sum;
     }
-    #[cfg(debug_assertions)]
-    println!("node: {}: sum = {}", node, node_sum);
-    sum += node_sum;
-  }
   if sum < 0.0{
     sum = -1.0 * sum;
   }

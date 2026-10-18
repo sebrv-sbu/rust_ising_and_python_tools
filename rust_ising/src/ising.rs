@@ -144,16 +144,16 @@ pub trait Ising{
   }
   fn low_temp_pert_weighted<F: Fn(f64, f64) -> f64>(
     &mut self,
-    local_min_approx:BitVec, 
+    local_min_approx:&BitVec, 
     temperature:f64,
     weight_func:F
     )->f64{
-    self.set_spins(local_min_approx);
+    self.set_spins(local_min_approx.clone());
     (0..self.n_points()).map(|v| (-self.cost_diff(v).abs() / temperature).exp()
       * weight_func(self.cost_diff(v), temperature))
       .sum::<f64>() / self.n_points() as f64
   }
-  fn low_temp_pert(&mut self, local_min_approx:BitVec, temperature:f64) -> f64{
+  fn low_temp_pert(&mut self, local_min_approx:&BitVec, temperature:f64) -> f64{
     self.low_temp_pert_weighted(local_min_approx, temperature, |_,_| 1.0f64)
   }
   fn reinitialize(&mut self){
@@ -206,7 +206,7 @@ impl WeightsAndSpinStates{
       buffer: vec![0u64; n*stride].into_boxed_slice() 
       }
     }
-  #[inline] fn base(&self, v:usize) ->usize { v*self.stride }
+  #[inline] fn base(&self, v:usize) -> usize { v * self.stride }
   #[inline] 
   fn edge_slot(&self, v:usize, i:usize) -> usize{ self.base(v) + 2 + 2 * i }
   #[inline]
@@ -214,7 +214,7 @@ impl WeightsAndSpinStates{
     self.base(v) + 3 + 2 * i
   }
   #[inline] 
-  fn vertex_spin(&self,v:usize) -> bool{ self.buffer[self.base(v)] == 1 }
+  fn vertex_spin(&self,v:usize) -> bool { self.buffer[self.base(v)] == 1 }
   #[inline]
   fn vertex_mag(&self,v:usize) -> f64 {
     f64::from_bits(self.buffer[self.base(v)+1])

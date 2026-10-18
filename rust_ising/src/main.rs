@@ -3,7 +3,6 @@ mod ising_io;
 mod anneal;
 mod greedy;
 use crate::ising_io::*;
-use crate::anneal::*;
 use crate::ising::*;
 use clap::{Parser,Subcommand,ArgAction};
 use std::path::PathBuf;
@@ -54,11 +53,25 @@ enum Mode{
   LowConv{
     #[arg(short = 'T', long = "temperature_override", default_value = None)]
     temperature_override:Option<f64>,
+    #[arg(short = 'p', long = "percent", default_value = None)]
+    percent_opt:Option<f64>,
+    #[arg(short = 't', long = "approx_hitting_time",
+      action = ArgAction::SetTrue)]
+    compute_approx_hitting_time:bool,
+    #[arg(short = 'r', long = "human_readable", action = ArgAction::SetTrue)]
+    human_readable:bool,
   },
   #[command(about= "Asymptotic Matching for Convergence Rate")]
   AsymptoticMatch{
     #[arg(short = 'T', long = "temperature_override", default_value = None)]
     temperature_override:Option<f64>,
+    #[arg(short = 'p', long = "percent", default_value = None)]
+    percent_opt:Option<f64>,
+    #[arg(short = 't', long = "approx_hitting_time",
+      action = ArgAction::SetTrue)]
+    compute_approx_hitting_time:bool,
+    #[arg(short = 'r', long = "human_readable", action = ArgAction::SetTrue)]
+    human_readable:bool,
   },
   #[command(about = "Finite Temperature Experiments")]
   FiniteT{
@@ -179,7 +192,7 @@ fn run_mode<I:Ising + std::fmt::Debug>(args: Args) -> Result<()>{
         ground_state_opt.as_ref(),
         &mut ising_model);
       if compute_approx_hitting_time{
-        compute_hitting_time_output(human_readable, percent_opt,
+        compute_hitting_time_output_high_t(human_readable, percent_opt,
           perturbation_result, &mut ising_model)?;
       }
     }
@@ -212,27 +225,30 @@ fn run_mode<I:Ising + std::fmt::Debug>(args: Args) -> Result<()>{
     => {
       eprintln!("What?");
     },
-  Mode::LowConv{temperature_override} => {
+  Mode::LowConv{temperature_override,
+  percent_opt, compute_approx_hitting_time, human_readable} => {
     let temperature = temperature_override.unwrap_or(temperature_from_file);
-    let local_state = local_state_opt.expect("main.rs: local_state must be \
-      provided to compute perturbation for low temperature");
-    let pert = low_temp_theoretical_perturbation_naive(
-      &mut ising_model, local_state, temperature
-      );
-    println!("{}", pert);
-  },
-  Mode::AsymptoticMatch{temperature_override} => {
+    let perturbation = low_conv_output(temperature, human_readable,
+      local_state_opt.as_ref(), &mut ising_model)?;
+    if compute_approx_hitting_time {
+      compute_hitting_time_output_low_mid_t(human_readable,
+        percent_opt, perturbation, &mut ising_model)?;
+      }
+    },
+  Mode::AsymptoticMatch{temperature_override,
+  percent_opt, compute_approx_hitting_time, human_readable} => {
   let temperature = temperature_override.unwrap_or(temperature_from_file);
-  let local_state = local_state_opt.expect("main.rs: local_state must be \
-    provided to perform asymptotic match");
-  let ground_state = ground_state_opt.expect("main.rs: ground state must be \
-    provided to perform asymptotic match");
-  let pert = asymptotic_matching(
-    &mut ising_model, 
-    local_state, 
-    &Some(ground_state),
-    temperature);
-  println!("{}",pert);
+  let perturbation = asymptotic_match_output(
+    temperature,
+    human_readable,
+    local_state_opt.as_ref(),
+    ground_state_opt.as_ref(),
+    &mut ising_model
+  )?;
+  if compute_approx_hitting_time{
+    compute_hitting_time_output_low_mid_t(human_readable, 
+      percent_opt, perturbation, &mut ising_model)?;
+      }
     },
   }
   Ok(())

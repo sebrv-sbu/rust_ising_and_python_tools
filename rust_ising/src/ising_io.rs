@@ -32,6 +32,14 @@ pub struct IsingSpecifiers{
   ext_field: f64
 }
 
+const LOCAL_MIN_MISSING_ERR: &str = "No local minimum \
+    supplied in file. Cannot compute low temperature perturbation. Consider \
+    using the ground-state-approx mode with local minimum (-l) and modify \
+    input file (-w) enabled";
+const GLOBAL_MIN_MISSING_ERR: &str = "No global minimum \
+    supplied in file. Cannot compute low temperature perturbation. Consider \
+    using the ground-state-approx mode with modify input file (-w) enabled";
+
 struct EdwardsAnderson<E, M, X>
   where 
     E:Distribution<f64>,
@@ -578,6 +586,7 @@ pub fn finite_temperature_option<I:Ising>(
           .with_context(write_err)?,
         None => writeln!(stationary_out, "NA").with_context(write_err)?
       }
+      stationary_out.flush().with_context(write_err)?;
       ising_model.reinitialize();
     } 
   } else {
@@ -593,6 +602,7 @@ pub fn finite_temperature_option<I:Ising>(
       writeln!(stationary_out, "{}\t{:.6e}\t{:016x}\t{}", best_conf_string,
         best_cost, best_cost.to_bits(), hit).with_context(write_err)?;
       ising_model.reinitialize();
+      stationary_out.flush().with_context(write_err)?;
     }
   }
   Ok(())
@@ -628,6 +638,7 @@ pub fn infinite_temperature_option<I:Ising>(
           .with_context(write_err)?,
         None => writeln!(stationary_out, "NA").with_context(write_err)?
       }
+      stationary_out.flush().with_context(write_err)?;
       ising_model.reinitialize();
     }
   } else {
@@ -642,6 +653,7 @@ pub fn infinite_temperature_option<I:Ising>(
       let best_conf_string = bitvec_to_hex_string(&best_conf);
       writeln!(stationary_out, "{}\t{:.6e}\t{:016x}\t{}", best_conf_string,
         best_cost, best_cost.to_bits(), hit).with_context(write_err)?;
+      stationary_out.flush().with_context(write_err)?;
       ising_model.reinitialize();
     }
   }
@@ -663,20 +675,70 @@ pub fn high_conv_output<I:Ising>(temperature:f64, human_readable:bool,
     (sign, log_sum)
 }
 
-pub fn compute_hitting_time_output<I:Ising>(
+pub fn low_conv_output<I:Ising>(
+  temperature:f64,
+  human_readable:bool,
+  local_min_approx_opt:Option<&BitVec>,
+  ising_model: &mut I) -> Result<f64>{
+  let local_min_approx = local_min_approx_opt.context(LOCAL_MIN_MISSING_ERR)?;
+  let perturbation = ising_model.low_temp_pert(local_min_approx, temperature);
+  if human_readable{
+    println!("low temperature perturbation: {}", perturbation)
+  }
+  else {
+    println!("{}", perturbation);
+  }
+  Ok(perturbation)
+}
+
+pub fn asymptotic_match_output<I:Ising>(
+  temperature:f64,
+  human_readable:bool,
+  local_min_approx_opt:Option<&BitVec>,
+  ground_state_approx_opt:Option<&BitVec>,
+  ising_model:&mut I) -> Result<f64>{
+  let local_min_approx = local_min_approx_opt.context(LOCAL_MIN_MISSING_ERR)?;
+  let ground_state_approx = ground_state_approx_opt
+    .context(GLOBAL_MIN_MISSING_ERR)?;
+  let perturbation = asymptotic_matching(ising_model,
+    local_min_approx, ground_state_approx, temperature);
+  if human_readable{
+    println!("asymptotic match: {}", perturbation);
+  } else {
+    println!("{}", perturbation);
+  }
+  Ok(perturbation)
+}
+
+pub fn compute_hitting_time_output_high_t<I:Ising>(
   human_readable:bool,
   percent_opt:Option<f64>,
   perturbation_result:(bool, f64),
   ising_model: &mut I) -> Result<()> {
   let percent = percent_opt.unwrap_or(0.25);
-  let steps = approx_num_steps_for_percent(ising_model, percent, None,
-    Some(perturbation_result), None)?;
+  let steps = approx_num_steps_for_percent_log_perturbation
+    (ising_model, percent, None, Some(perturbation_result), None)?;
   if human_readable {
     println!("Takes ~ {steps} steps to have {percent} \
               probability of hitting")
   } else {
     println!("{}, {}", steps, percent);
   }
+  Ok(())
+}
+
+pub fn compute_hitting_time_output_low_mid_t<I:Ising>(
+  human_readable:bool,
+  percent_opt:Option<f64>,
+  perturbation:f64,
+  ising_model: &mut I) -> Result<()>{
+  let percent = percent_opt.unwrap_or(0.25);
+  let steps = approx_num_steps_for_percent(ising_model, percent,
+    None, Some(perturbation), None)?;
+  if human_readable {
+    println!("Takes ~ {steps} steps to have {percent} \
+      probability of hitting");
+  } else { println!("{}, {}", steps, percent); }
   Ok(())
 }
 
