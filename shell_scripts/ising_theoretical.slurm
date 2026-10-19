@@ -6,11 +6,7 @@
 #SBATCH --time=48:00:00
 
 #Insert the code directory you will use here:
-#Note that the github package comes with graphical_tools and rust_ising
-#directory - so in my case I stupidly named the directory as rust_ising
-#giving this funny codedir:
 CODEDIR=~/rust_ising_and_python_tools/
-#Can modify this if you put the lockscript somewhere else:
 
 #Do not modify unless the rust ising directory is renamed for some odd reason
 RUSTDIR=$CODEDIR/rust_ising/
@@ -50,7 +46,8 @@ cd $ISINGDIR
 #Modify to your specifications
 ISINGFILE=$ISINGDIR/ising_6x5
 
-steps=()
+TEMPS=(0.00001 0.0001 0.001 0.01 0.1 1) 
+
 for T in "${TEMPS[@]}"; do
   below() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a < b) }'; }
   time_per_100000=$("$BENCHMARK" "$ISINGFILE" -T "$TEMP" -R 1000 -n 100000 -N 1)
@@ -83,7 +80,7 @@ for T in "${TEMPS[@]}"; do
       max_steps = budget * 100000 / t       # steps that fit in that budget
       printf "%.0f\n", (max_steps < s) ? max_steps : s
     }')
-  srun --exact --ntaskes=40 --cpus-per-task=1 \
+  srun --exact --ntasks=40 --cpus-per-task=1 \
     "$SINGLECPU" "$ISING_FILE" \
     -r "$CODEDIR" -T "$T" -n "$steps" -N "4294967295" -t "$TMPDIR_ISING" \
     -E "$ERR_AND_WARNING_DIR" -M "$ISINGDIR/final_output_T_${T}"
