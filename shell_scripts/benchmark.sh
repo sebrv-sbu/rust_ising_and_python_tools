@@ -1,3 +1,4 @@
+#!/bin/bash
 usage() {
   echo "Usage:$0 <ising_file_name> [-r rust_ising_binary] [-T temperature] [-n steps] [-N runs] [-R repeats]"
   exit 1
@@ -30,6 +31,7 @@ done
 
 tmp=~/tmp/benchmark_temp_"$T"
 
+cargo install hyperfine
 hyperfine --conclude "rm -f stationary_hits_finite.txt" \
   --warmup 10 \
   --runs "$R" \

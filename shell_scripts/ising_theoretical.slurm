@@ -20,7 +20,6 @@ DIM=2
 
 ISING_DIM=$DIM RUSTFLAGS="-C target-cpu=native" cargo build --release
 
-cargo install hyperfine
 #Do not modify these unless you are running debug mode, then change
 #release to debug in BINARYDIR.
 BINARYDIR=$RUSTDIR/target/release
