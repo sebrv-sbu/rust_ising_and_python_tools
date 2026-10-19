@@ -120,6 +120,7 @@ pub trait Ising{
     }
     let cluster_weight = integral_weight(m)
       .expect("ising.rs error: m is out of range");
+
     let energy_diff = self.cluster_cost_diff(&cluster, center, 
       ground_center_bit);
     let sign = if energy_diff > 0.0 { -1.0 } else { 1.0 };
@@ -579,7 +580,6 @@ impl IsingDisjoint {
         let was_equal = (neighbour_spin == old_spin) as isize;
         local_weight + ((2 * was_equal - 1) as f64) * edge.weight
     });
-
     let mag_diff = ((2 * (old_spin as i32) - 1) as f64) * 
       self.magnetic_field[node];
     2.0 * (interaction_diff + mag_diff)
@@ -593,9 +593,11 @@ impl IsingDisjoint {
         let was_equal = (neighbour_spin == ground_center_bit) as i32;
         local_weight + ((2 * was_equal - 1) as f64) * edge.weight
     });
+    #[cfg(debug_assertions)]
+    println!("node: {} interaction_diff {}", center, interaction_diff);
     let mag_diff = ((2 * (ground_center_bit) as i32 - 1) as f64) * 
       self.magnetic_field[center];
-    2.0 * interaction_diff * mag_diff
+    2.0 * (interaction_diff + mag_diff)
   }
   fn flip_spin_disjoint(&mut self, node:usize, delta:f64){
     self.cost = self.cost + delta;
