@@ -1,6 +1,4 @@
-The code for graphs was written with DeepSeek Pro version 4, then
-modified by me since generative AI really sucks with making legends look
-neat.
-
-The code for the Ising model itself was all hand rolled.
-
+Code written entirely by AI is marked as such.
+Most code was written by myself with AI assistance, primarily Claude Sonnet,
+but some amount of DeepSeek version 3 (both flash and pro) and some amount
+of the browser version of ChatGPT.
