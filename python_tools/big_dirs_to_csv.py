@@ -21,6 +21,7 @@ args=parser.parse_args();
 
 COLS=["best_configuration", "best_cost", "best_cost_fpb", "hitting_time"]
 DTYPES={"best_configuration":str, "best_cost_fpb": str}
+OLD_NAME_RE = re.compile(r"^T_([0-9.]+(?:[eE][+-]?\d+)?)_")
 def load_old_format_run(root_dir):
   root = Path(root_dir)
   frames = []
@@ -33,7 +34,7 @@ def load_old_format_run(root_dir):
     has_header = (first == COLS)
     df = pd.read_csv(f, sep="\t", header=0 if has_header else None, names=COLS,
                      dtype=DTYPES)
-    m=re.match(r"T_(\d+)", f.name)
+    m=OLD_NAME_RE.match(f.name)
     if m is None: 
       raise ValueError(f"file name does not conform to old_output: {f}")
 

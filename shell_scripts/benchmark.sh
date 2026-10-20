@@ -30,9 +30,8 @@ while getopts ":r:T:n:N:R:" opt; do
 done
 
 tmp=~/tmp/benchmark_temp_"$T"
-
 cargo install hyperfine
-hyperfine --conclude "rm -f stationary_hits_finite.txt" \
+~/.cargo/bin/hyperfine --conclude "rm -f stationary_hits_finite.txt" \
   --warmup 10 \
   --runs "$R" \
   --export-json "$tmp" \

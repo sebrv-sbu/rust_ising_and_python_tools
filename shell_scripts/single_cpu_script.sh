@@ -11,7 +11,7 @@ usage() {
 ising_file_name="$1"
 shift
 [[ -f "$ising_file_name" ]] || {
-  echo "$ising_file_name does not exist" >&2; exit 1
+  echo "single_cpu_script: $ising_file_name does not exist" >&2; exit 1
 }
 
 
@@ -48,7 +48,7 @@ ISINGFILE="$ising_file_name"_${SLURM_PROCID}_${steps}_${T}
 
 "$BINARY" "$ISINGFILE" finite-t \
   -s "$ISINGTMPDIR"/tmp_run_${SLURM_PROCID} ${flags[@]} \
-  2>>"$ERR_AND_WARNING_DIR/"err_output_${SLURM_PROCID} 
+  2>>"$ERR_AND_WARNING_DIR/"err_output_${SLURM_PROCID}_${T}
 
 "$LOCKSCRIPT" \
   "$ISINGTMPDIR"/append.lock_${steps}_${T} \
