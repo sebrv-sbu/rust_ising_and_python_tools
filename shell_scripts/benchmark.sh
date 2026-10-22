@@ -30,13 +30,14 @@ while getopts ":r:T:n:N:R:" opt; do
 done
 
 tmp=~/tmp/benchmark_temp_"$T"
+echo "$rust_ising_binary $ising_file_name finite-t ${flags[@]}">&2
 cargo install hyperfine
 ~/.cargo/bin/hyperfine --conclude "rm -f stationary_hits_finite.txt" \
   --warmup 10 \
   --runs "$R" \
   --export-json "$tmp" \
-  --style none \
+  --show-output \
   -N \
-  "$rust_ising_binary $ising_file_name finite-t ${flags[*]}"
+  "$rust_ising_binary $ising_file_name finite-t ${flags[*]}" >&2
 jq '.results[0].summary.time_wall_clock.mean' "$tmp"
 rm $tmp

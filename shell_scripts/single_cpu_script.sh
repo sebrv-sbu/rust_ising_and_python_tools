@@ -45,9 +45,11 @@ mkdir -p "$ERR_AND_WARNING_DIR"
 "$RANDOMISESCRIPT" "$ising_file_name" "$ising_file_name"_${SLURM_PROCID}_${steps}_${T}
 ISINGFILE="$ising_file_name"_${SLURM_PROCID}_${steps}_${T}
 
+echo "$BINARY $ISINGFILE finite-t -s "$ISINGTMPDIR"/tmp_run_${SLURM_PROCID} ${flags[@]} 2>>$ERR_AND_WARNING_DIR/err_output_${SLURM_PROCID}_${T}"
+
 
 "$BINARY" "$ISINGFILE" finite-t \
-  -s "$ISINGTMPDIR"/tmp_run_${SLURM_PROCID} ${flags[@]} \
+  -s "$ISINGTMPDIR"/tmp_run_${SLURM_PROCID}_${steps}_${T} ${flags[@]} \
   2>>"$ERR_AND_WARNING_DIR/"err_output_${SLURM_PROCID}_${T}
 
 "$LOCKSCRIPT" \
