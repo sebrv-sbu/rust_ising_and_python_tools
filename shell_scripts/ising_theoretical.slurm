@@ -4,9 +4,10 @@
 #SBATCH --nodes=6
 #SBATCH --ntasks=576
 #SBATCH --time=48:00:00
+#SBATCH --mem-per-cpu=2G
 
 #Modify to be the code directory you will use here:
-CODEDIR=~/rust_ising_and_python_tools3
+CODEDIR=~/rust_ising_and_python_tools
 
 #Do not modify unless the rust ising directory is renamed for some odd reason
 RUSTDIR=$CODEDIR/rust_ising
@@ -45,7 +46,7 @@ cd $ISINGDIR
 #Modify to your specifications
 ISINGFILE=$ISINGDIR/inst6x6
 
-TEMPS=(3e5 1e6 3e6 1e7 3e-5 1e-5)
+TEMPS=(1.8e0 1e6 3e6 1e7 3e-5 1e-5)
 
 
 for T in "${TEMPS[@]}"; do
@@ -85,10 +86,9 @@ for T in "${TEMPS[@]}"; do
     }
   }')
   echo $steps
-    srun --exact --ntasks=96 --cpus-per-task=1 \
+    srun --exact --ntasks=96 --mem-per-cpu=2G \
       "$SINGLECPU" "$ISINGFILE" \
       -r "$CODEDIR" -T "$T" -n "$steps" -N "4294967295" -t "$ISINGTMPDIR" \
       -E "$ERR_AND_WARNING_DIR" -M "$ISINGDIR/final_output_T_${T}"&
 done
-
 wait
