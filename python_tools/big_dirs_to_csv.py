@@ -4,6 +4,7 @@ import fnmatch, glob
 import pandas as pd
 import numpy as np
 import re
+import warnings
 
 parser = argparse.ArgumentParser(description=("Move all ising files for one "
                                               "run type into a csv"))
@@ -43,7 +44,9 @@ def load_old_format_run(root_dir):
     frames.append(df)
   return pd.concat(frames, ignore_index=True)
 
-NEW_FORMAT_REGEXP=re.compile(r"^.+_\d+_(\d+)_(\d+(?:\.\d+)?)$")
+NEW_FORMAT_REGEXP = re.compile(
+    r"^.+?_(\d+)_(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)$"
+)
 
 def load_new_format_run(root_dir):
   root = Path(root_dir)
@@ -52,6 +55,7 @@ def load_new_format_run(root_dir):
     is_match = fnmatch.fnmatch(f.name, args.pattern)
     if not (f.is_file() and is_match):
       continue
+    print(f)
     with open(f) as fh:
       first = fh.readline().rstrip("\n").split("\t")
     has_header = (first == COLS)
@@ -59,7 +63,8 @@ def load_new_format_run(root_dir):
                      names = COLS, dtype=DTYPES)
     file_name_parsed=NEW_FORMAT_REGEXP.match(f.name)
     if file_name_parsed is None:
-      raise ValueError(f"file name does not conform to new_output: {f}")
+      warnings.warn(f"file name does not conform to new_output, skipping: {f}")
+      continue
       
     df["max_steps"]=int(file_name_parsed.group(1))
     df["T"]=float(file_name_parsed.group(2))

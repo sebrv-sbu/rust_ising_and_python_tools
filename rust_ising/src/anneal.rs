@@ -3,6 +3,7 @@ use bitvec::prelude::*;
 use anyhow::{bail, Context, Result};
 
 const RECORD_EPS: f64 = 1e-9;
+const RECOMPUTE_INTERVAL: usize = 1 << 20;
 
 pub fn stationary_infinite_temperature_optimise<I:Ising>(
   ising: &mut I,
@@ -89,6 +90,9 @@ pub fn stationary_finite_temperature_optimise<I:Ising>(
     (ising.config_to_bitvec(), ising.cost(), 0),
     |(min_conf, min_cost, hit), _|{
       ising.anneal(temperature);
+      if step % RECOMPUTE_INTERVAL == 0{
+        ising.init_cost();
+      }
       step += 1;
       if ising.cost() < min_cost - RECORD_EPS{
         (ising.config_to_bitvec(), ising.cost(), step)

@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from scipy.optimize import minimize
+from scipy.optimize import minimize, minimize_scalar, brentq
 from scipy.special import logsumexp, softmax
 
 parser = argparse.ArgumentParser(
@@ -242,6 +242,40 @@ def tail_flatness(hit_times, n_total, M, frac=0.5):
         return h_half / n_total, h_end / n_total, np.inf
     return h_half / n_total, h_end / n_total, -np.log1p(-delta / u_half)
 
+def error_bar(hit_times, n_total, M, b0, level=3.841):
+  t = np.asarray(hit_times, dtype=float)
+  h = t.size
+  if h == 0:
+    raise RuntimeError("no hits")
+  c = n_total - h              # runs that never hit by M
+  S = t.sum()
+
+  def ll(b):
+    q = -np.expm1(-b * M)    # P(hit by M | eventually hits)
+    if h >= n_total * q:     # best a is capped at 1
+      return h * np.log(b) - b * S - c * b * M
+    return (h * np.log(h / (n_total * q)) + h * np.log(b) - b * S
+          + c * np.log(c / n_total))
+
+  f = lambda x: -ll(np.exp(x))             # work in log b
+  x0 = np.log(b0)
+  r = minimize_scalar(f, bounds=(x0 - 6, x0 + 6), method="bounded")
+  x_hat, nll_min = r.x, r.fun
+  g = lambda x: f(x) - nll_min - level / 2
+
+  def bracket(sign):
+    step = 0.1
+    while step <= 20:                    # stay within a factor e^20 of b_hat
+      x = x_hat + sign * step
+      if g(x) > 0:
+        return x
+      step *= 2
+    raise RuntimeError("could not bracket the profile interval")
+
+  lo = brentq(g, bracket(-1), x_hat)
+  hi = brentq(g, x_hat, bracket(+1))
+  return np.exp(lo), np.exp(x_hat), np.exp(hi)
+
 def error_bar_boot(hit_times, n_total, M, b_init, B=300,
                    level=0.95, seed=0, n_starts=3):
   def fit_dominant_rate(t_b):
@@ -295,11 +329,19 @@ for T, g in data.groupby("T"):
   rates = rates[keep]
   b_init=-np.log1p(-rates)
   k = len(b_init)
+  one_peak_fallback = False
+  a0=1
+  if k == 0 and len(hit_times) > 0:
+    b_init = np.array([len(hit_times)/(hit_times.sum() + n_cens * M)])
+    k=1
+    one_peak_fallback  = True
+    #print(f"T={T}: too few hits for plateau counting, using one exponential") 
   if k == 0:
-    exp_rates2=[0]
-    coeffs2=[0]
+    exp_rates2=[np.nan]
+    coeffs2=[np.nan]
     lo=np.nan
     hi=np.nan
+    frac_failed=np.nan
   else:
     _, coeffs, exp_rates, res = fit_mixture(hit_times, n_cens, M, b_init=b_init)
     keep = coeffs >= min_weight
@@ -309,7 +351,19 @@ for T, g in data.groupby("T"):
     a0, coeffs2, exp_rates2, res2 = fit_mixture(hit_times, n_cens, M,
                                             b_init=exp_rates[keep])
     k=len(coeffs2)
-    lo, hi, frac_failed = error_bar_boot(hit_times, n_total, M, exp_rates2)
+    if k == 1: 
+      try:
+        lo, _, hi = error_bar(hit_times, n_total, M, exp_rates2[0])
+      except RuntimeError:
+        lo = hi = np.nan
+      frac_failed=0.0
+    else:
+      lo, hi, frac_failed = error_bar_boot(hit_times, n_total, M, exp_rates2)
+  if a0 > 0.05:
+    row["high_zero_weight"] = True
+  else:
+    row["high_zero_weight"] = False
+
   row[f"n_plateaus"] = k
   row["n_exponentials"] = k
   row["empirical_dominant_rate"] = exp_rates2[0]

@@ -25,7 +25,7 @@ while getopts ":r:T:n:N:R:" opt; do
     N) flags+=(-r "$OPTARG")  ;;
     R) R="$OPTARG"  ;;
     :) echo "option -$OPTARG requires an argument" >&2; usage;;
-    \?) echo "unknown option: -$OPTARG >&2"; usage;;
+    \?) echo "unknown option: -$OPTARG" >&2 ; usage;;
   esac
 done
 
