@@ -87,6 +87,10 @@ enum Mode{
     #[arg(short = 'g', long = "hitting_time_with_ground_state", 
       action = ArgAction::SetTrue)]
     ground_state_provided:bool,
+    #[arg(short = 'c', long="checkpoint_file", default_value=None)]
+    checkpoint_file:Option<PathBuf>,
+    #[arg(long = "checkpoint_interval", default_value = "1048576")]
+    checkpoint_interval:usize,
   },
   #[command(about="Approximate Ground State with Greedy Algorithm")]
   GroundStateApprox{
@@ -153,7 +157,9 @@ fn run_mode<I:Ising + std::fmt::Debug>(args: Args) -> Result<()>{
       max_steps,
       runs,
       temperature_override,
-      ground_state_provided} => {
+      ground_state_provided,
+      checkpoint_file,
+      checkpoint_interval} => {
       let temperature:f64;
       match temperature_override{
         Some(temperature_opt) => { 
@@ -170,7 +176,9 @@ fn run_mode<I:Ising + std::fmt::Debug>(args: Args) -> Result<()>{
         stationary_file_name,
         temperature,
         ground_state_opt,
-        ground_state_provided)?
+        ground_state_provided,
+        checkpoint_file,
+        checkpoint_interval)?
     }
     Mode::HighConv{
       temperature_override,

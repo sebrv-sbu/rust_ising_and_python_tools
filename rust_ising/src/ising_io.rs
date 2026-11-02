@@ -6,8 +6,8 @@ use crate::greedy::*;
 /* std */
 use std::io::{BufReader, BufRead, Write, BufWriter, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::fs::File;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
+use std::fs;
 use std::str::FromStr;
 use std::error::Error;
 
@@ -281,6 +281,35 @@ Result<Option<Vec<StartingConfig>>>
       })
     }
   Ok(Some(starting_configs_base))
+}
+
+fn hex_string_to_bitvec(hex_string: &Vec<String>, length:usize)->Result<BitVec>{
+  let bytes: Vec<u8> = hex_string
+    .into_iter()
+    .map(|tok| {
+      u8::from_str_radix(tok, 16)
+      .with_context(|| format!("ising_io.rs: hex_string_to_bitvec: \
+            invalid hex byte {tok:?}"))
+    })
+  .collect::<Result<_>>()?;
+  #[cfg(debug_assertions)]
+  println!("{:?}", hex_string);
+
+  let hex_length = length.div_ceil(8);
+  ensure!( bytes.len() == hex_length,
+    "ising_io.rs: hex_string_to_bitvec: expected {hex_length} bytes \
+    for {length} spins, found {}", bytes.len());
+    let chunk_size = std::mem::size_of::<usize>();
+    let config_usize:Vec<usize> = bytes.chunks(chunk_size)
+      .map(|chunk| {
+        chunk.iter()
+          .enumerate()
+          .fold(0usize, |acc, (i, &byte)|{
+            acc | ((byte as usize) << i*8)
+          })
+        })
+      .collect();
+  Ok(usize_to_config(config_usize, length))
 }
 
 fn read_state<R:BufRead, I:Ising>(reader:&mut R, ising_instance:&I,
@@ -562,12 +591,39 @@ pub fn finite_temperature_option<I:Ising>(
   temperature:f64,
   ground_state_opt:Option<BitVec>,
   ground_state_provided:bool,
+  checkpoint_file_opt:Option<PathBuf>,
+  checkpoint_interval:usize
   ) -> Result<()>{
   let write_err = || format!("ising_io.rs: error writing to stationary file \
     {}", stationary_file_name.display());
-  let stationary_file = File::create(&stationary_file_name).with_context
-    (|| format!("ising_io.rs error:could not create new stationary file {}",
-                stationary_file_name.display()))?;
+  let is_new = !stationary_file_name.exists();
+  let mut resume:Option<CheckpointState> = None;
+  if let Some(checkpoint_file) = &checkpoint_file_opt {
+    let has_data = checkpoint_file.exists() && 
+      fs::metadata(checkpoint_file)?.len() > 0;
+    if has_data {
+      let resume_temp = from_checkpoint(ising_model, checkpoint_file)?;
+      if resume_temp.max_steps!= max_steps{
+        eprintln!("warning: checkpoint file conflicts with user inputted \
+          max steps. Using checkpoint file value for max_steps.");
+      }
+      if ((resume_temp.temperature - temperature)/temperature).abs() > 1e-9{
+        eprintln!("warning: checkpoint file conflicts with user inputted \
+          temperature. Using checkpoint file value for temperature.");
+      }
+      resume = Some(resume_temp);
+    } else if !is_new && !has_data{
+      bail!("{} exists but there is no usable checkpoint; refusing to append",
+        stationary_file_name.display());
+    }
+  }
+
+  let stationary_file = OpenOptions::new()
+    .create(true)
+    .append(true)
+    .open(&stationary_file_name)
+    .with_context(|| format!("ising_io.rs error:could not open stationary \
+        file {}", stationary_file_name.display()))?;
   let mut stationary_out = BufWriter::new(stationary_file);
   if ground_state_provided{
     if ground_state_opt.is_none(){
@@ -579,7 +635,7 @@ pub fn finite_temperature_option<I:Ising>(
       ising_model,
       &ground_state,
       max_steps,
-      temperature
+      temperature,
     );
       match hitting_time{
         Some(steps) => writeln!(stationary_out, "{}", steps)
@@ -590,16 +646,23 @@ pub fn finite_temperature_option<I:Ising>(
       ising_model.reinitialize();
     } 
   } else {
-    writeln!(stationary_out, "{}\t{}\t{}\t{}", "best_configuration",
+    if stationary_out.get_ref().metadata()?.len() == 0{
+      writeln!(stationary_out, "{}\t{}\t{}\t{}\t{}\t{}","temperature",
+      "max_steps", "best_configuration",
       "best_cost", "best_cost_fpb", "hitting_time").with_context(write_err)?;
+    }
     for _ in 0..runs{
       let (best_conf, best_cost, hit) 
         = stationary_finite_temperature_optimise(
           ising_model,
           max_steps,
-          temperature);
+          temperature,
+          checkpoint_file_opt.as_ref(),
+          checkpoint_interval,
+          resume.take())?;
       let best_conf_string = bitvec_to_hex_string(&best_conf);
-      writeln!(stationary_out, "{}\t{:.6e}\t{:016x}\t{}", best_conf_string,
+      writeln!(stationary_out, "{}\t{}\t{}\t{:.6e}\t{:016x}\t{}", 
+        temperature, max_steps, best_conf_string,
         best_cost, best_cost.to_bits(), hit).with_context(write_err)?;
       ising_model.reinitialize();
       stationary_out.flush().with_context(write_err)?;
@@ -642,7 +705,8 @@ pub fn infinite_temperature_option<I:Ising>(
       ising_model.reinitialize();
     }
   } else {
-    writeln!(stationary_out, "{}\t{}\t{}\t{}", "best_configuration",
+    writeln!(stationary_out, "{}\t{}\t{}\t{}\t{}", 
+      "max_steps", "best_configuration",
       "best_cost", "best_cost_fpb", "hitting_time")
       .with_context(write_err)?;
     for _ in 0..runs{
@@ -651,7 +715,8 @@ pub fn infinite_temperature_option<I:Ising>(
           ising_model,
           max_steps);
       let best_conf_string = bitvec_to_hex_string(&best_conf);
-      writeln!(stationary_out, "{}\t{:.6e}\t{:016x}\t{}", best_conf_string,
+      writeln!(stationary_out, "{}\t{}\t{:.6e}\t{:016x}\t{}", 
+        max_steps, best_conf_string,
         best_cost, best_cost.to_bits(), hit).with_context(write_err)?;
       stationary_out.flush().with_context(write_err)?;
       ising_model.reinitialize();
@@ -827,4 +892,95 @@ pub fn greedy_approx_output<I:Ising>(
     }
   }
   Ok(())
+}
+
+pub fn checkpoint<I:Ising>(checkpoint_file_name:&PathBuf, 
+  checkpoint_file_bk_name:Option<&PathBuf>, ising:&I, step_count:usize,
+  max_steps:usize, temperature:f64, best_conf:&BitVec, hit:usize) 
+  -> Result<()>{
+  let write_err = || "ising_io.rs: could not write to checkpoint file";
+  if let Some(backup_name) = checkpoint_file_bk_name{
+    if checkpoint_file_name.exists(){
+      fs::copy(checkpoint_file_name, &backup_name)
+        .context("ising_io.rs: could not back up old checkpoint")?;
+    }
+  }
+  let file = File::create(checkpoint_file_name)
+    .with_context(|| format!("could not create{}", 
+        checkpoint_file_name.display()))?;
+  let mut w = BufWriter::new(file);
+  let bitvec_conf = ising.config_to_bitvec();
+  let rng_json = serde_json::to_string(ising.non_mut_get_rng())?;
+  writeln!(w, "$config").with_context(write_err)?;
+  writeln!(w, "{}",  
+    bitvec_to_hex_string(&bitvec_conf)).with_context(write_err)?;
+  writeln!(w, "$rng_state").with_context(write_err)?;
+  writeln!(w, "{rng_json}").with_context(write_err)?;
+  writeln!(w, "$step_count").with_context(write_err)?;
+  writeln!(w, "{step_count}").with_context(write_err)?;
+  writeln!(w, "$max_steps").with_context(write_err)?;
+  writeln!(w, "{max_steps}").with_context(write_err)?;
+  writeln!(w, "$temp").with_context(write_err)?;
+  writeln!(w, "{}", temperature.to_bits()).with_context(write_err)?;
+  writeln!(w, "$best_conf").with_context(write_err)?;
+  writeln!(w, "{}", bitvec_to_hex_string(best_conf)).with_context(write_err)?;
+  writeln!(w, "$hit").with_context(write_err)?;
+  writeln!(w, "{hit}").with_context(write_err)?;
+  w.flush().with_context(write_err)?;
+  w.get_ref().sync_all()?;
+  Ok(())
+}
+
+fn from_checkpoint<I:Ising>(ising:&mut I, checkpoint_file_name:&PathBuf) 
+  -> Result<CheckpointState>{
+  let read_err = |x| format!("ising_io.rs: could not find {x} in \
+    {}",checkpoint_file_name.display());
+  if !checkpoint_file_name.exists(){
+    bail!("checkpoint file not found");
+  } else {
+    let file = File::open(checkpoint_file_name)
+      .context("ising_io.rs: checkpoint file exists but \
+        could not open checkpoint file")?;
+    let mut reader = BufReader::new(file);
+    ensure!(
+      find_section(&mut reader, "$config")?, read_err("$config")
+    );
+    let hex: Vec<String> = parse_line(&mut reader, "config")?;
+    let conf = hex_string_to_bitvec(&hex, ising.n_points())
+      .with_context(|| "ising_io.rs: error converting hex string for current \
+        configuration into ising configuration")?;
+    ising.set_spins(conf);
+    ising.init_cost();
+    ensure!(
+      find_section(&mut reader, "$rng_state")?,read_err("$rng_state")
+    );
+    let rng_json: String = read_single_entry(&mut reader, "rng state")?;
+    let rng = serde_json::from_str(&rng_json)?;
+    ising.set_rng(rng);
+    #[cfg(debug_assertions)]
+    println!("after restore: {}", 
+      serde_json::to_string(ising.non_mut_get_rng())?);
+
+    ensure!(
+      find_section(&mut reader, "$step_count")?,read_err("$step_count")
+    );
+    let step:usize = read_single_entry(&mut reader, "step count")?;
+    ensure!(
+      find_section(&mut reader, "$max_steps")?,read_err("$max_steps")
+    );
+    let max_steps:usize = read_single_entry(&mut reader, "max steps")?;
+    ensure!(
+      find_section(&mut reader, "$temp")?,read_err("$temp")
+    );
+    let temp_bits:u64 = read_single_entry(&mut reader, "temperature")?;
+    let temperature = f64::from_bits(temp_bits);
+    ensure!(find_section(&mut reader, "$best_conf")?, read_err("best_conf"));
+    let hex:Vec<String> = parse_line(&mut reader, "best configuration")?;
+    let best_conf = hex_string_to_bitvec(&hex, ising.n_points())
+      .with_context(|| "ising_io.rs: error converting hex string for best \
+        configuration into ising configuration")?;
+    ensure!(find_section(&mut reader, "$hit")?,read_err("hit"));
+    let hit:usize = read_single_entry(&mut reader, "hit")?;
+    Ok(CheckpointState{step, max_steps, temperature, best_conf, hit})
+  }
 }

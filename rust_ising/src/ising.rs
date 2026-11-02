@@ -27,9 +27,11 @@ pub trait Ising{
   fn deg(&self) -> usize;
   fn set_edges(&mut self, weights:Vec<f64>);
   fn set_spins(&mut self, spins:BitVec);
+  fn set_rng(&mut self, rng: Pcg64Mcg);
   fn get_size(&self, i:usize) -> usize;
   fn get_sizes(&self) -> &[usize];
   fn get_rng(&mut self) -> &mut Pcg64Mcg;
+  fn non_mut_get_rng(&self) -> &Pcg64Mcg;
   fn set_starting_configs(&mut self,
     starting_configs:Option<Vec<StartingConfig>>);
   fn cluster_cost_diff(&self, cluster:&Bits, center:usize,
@@ -161,7 +163,15 @@ pub trait Ising{
     self.init_spins();
     self.init_cost();
   }
-
+  fn config_cost(&mut self, conf: &BitVec) -> f64{
+    let old = self.config_to_bitvec();
+    self.set_spins(conf.clone());
+    self.init_cost();
+    let cost = self.cost();
+    self.set_spins(old);
+    self.init_cost();
+    cost
+  }
 }
 
 #[derive(Clone, Copy, Debug, clap::ValueEnum)]
@@ -648,12 +658,17 @@ impl Ising for IsingDisjoint {
     ){
     self.set_starting_configs_disjoint(starting_config);
   }
+  fn set_rng(&mut self, rng:Pcg64Mcg){
+    self.random_number_generator = rng;
+  }
   #[inline]
   fn get_size(&self, i:usize) -> usize{ self.sizes[i] }
   #[inline]
   fn get_sizes(&self) -> &[usize]{ &self.sizes }
   #[inline]
   fn get_rng(&mut self) -> &mut Pcg64Mcg{ &mut self.random_number_generator }
+  #[inline]
+  fn non_mut_get_rng(&self) -> &Pcg64Mcg{ &self.random_number_generator }
   #[inline]
   fn cluster_cost_diff(&self, cluster: &Bits, center:usize,
     ground_center_bit:bool) -> f64{
@@ -686,6 +701,8 @@ impl Ising for IsingPacked {
   #[inline]
   fn get_rng(&mut self) -> &mut Pcg64Mcg { &mut self.random_number_generator }
   #[inline]
+  fn non_mut_get_rng(&self) -> &Pcg64Mcg { &self.random_number_generator }
+  #[inline]
   fn set_edges(&mut self, weights:Vec<f64>){
     self.set_edges_packed(weights).unwrap();
   }
@@ -696,6 +713,9 @@ impl Ising for IsingPacked {
     starting_configs:Option<Vec<StartingConfig>>
   ){
     self.set_starting_configs_packed(starting_configs);
+  }
+  fn set_rng(&mut self, rng:Pcg64Mcg){
+    self.random_number_generator = rng;
   }
   #[inline]
   fn get_size(&self, i:usize) -> usize{ self.sizes[i] }

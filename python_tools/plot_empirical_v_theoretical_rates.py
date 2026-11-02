@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.ticker import LogLocator, NullFormatter
+
 
 
 parser = argparse.ArgumentParser(
@@ -10,6 +12,8 @@ parser = argparse.ArgumentParser(
 parser.add_argument("input_csv", help="input csv", metavar="input-csv")
 parser.add_argument("--output-file", default="emp_v_rate.pdf", 
                     help="output file name")
+parser.add_argument("--x-min", type=float, default=1e-2)
+parser.add_argument("--y-min", type=float, default=None)
 
 args=parser.parse_args();
 
@@ -25,7 +29,7 @@ missing = [c for c in REQUIRED_COLS if c not in data.columns]
 if missing:
   raise SystemExit(f"CSV is missing columns {missing}; regenerate it.")
 
-HIT_THRESH = 0.95
+HIT_THRESH = 0.75
 
 rate=data["empirical_dominant_rate"]
 lo_err = np.maximum(rate-data["error_bar_lo"], 0)
@@ -47,7 +51,6 @@ ax.set_yscale("log")
 
 ax.set_ylabel("rate")
 
-l1, = ax.plot(data["T"], data["asymptotic_approx"], "-", color="C2")
 l2, = ax.plot(data["T"], data["high_temp_approx"], "--", color="C3")
 l3, = ax.plot(data["T"], data["low_temp_approx"], ":", color="C4")
 pct = HIT_THRESH *100
@@ -56,13 +59,21 @@ handles = [
     Line2D([], [], marker="o", ls="", color="C1", label=rf"<{pct:g}% runs hit"),
     Line2D([], [], marker="o", ls="", color="gray", label="slow peak hit"),
     Line2D([], [], marker="o", ls="", color="gray", mfc="none",
-           label="theory not testable"),
-    l1, l2, l3,
+           label="slow peak not hit"),
+    l2, l3,
     ]
 labels = [h.get_label() for h in handles]
-labels[4:] = ["asymptotic match", "high temperature perturbation series",
+labels[4:] = ["high temperature perturbation series",
               "low temperature perturbation series"]
 ax.legend(handles, labels)
-ax.set_ylim(top=1, bottom=min(rate))
+if args.y_min is None:
+  y_bot = min(rate)
+else:
+  y_bot = args.y_min
+ax.set_ylim(top=1, bottom=y_bot)
+ax.set_xlim(left=args.x_min)
+ax.xaxis.set_minor_locator(LogLocator(base=10, subs=range(2,10), numticks=200))
+ax.xaxis.set_minor_formatter(NullFormatter())   # ticks but no labels
+ax.xaxis.set_major_locator(LogLocator(base=10, subs=(1.0,), numticks=20))
 fig.tight_layout()
 fig.savefig(args.output_file, dpi=200)

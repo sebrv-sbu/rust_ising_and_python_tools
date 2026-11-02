@@ -1,9 +1,21 @@
+/* our import */
 use crate::ising::*;
+use crate::ising_io::checkpoint;
+
+/* std */
+use std::path::PathBuf;
+
+/* other */
 use bitvec::prelude::*;
 use anyhow::{bail, Context, Result};
 
 const RECORD_EPS: f64 = 1e-9;
 const RECOMPUTE_INTERVAL: usize = 1 << 20;
+
+pub struct CheckpointState{
+  pub step:usize, pub max_steps:usize,
+  pub temperature:f64, pub best_conf:BitVec, pub hit:usize
+}
 
 pub fn stationary_infinite_temperature_optimise<I:Ising>(
   ising: &mut I,
@@ -13,6 +25,9 @@ pub fn stationary_infinite_temperature_optimise<I:Ising>(
     (ising.config_to_bitvec(), ising.cost(),0),
     |(min_conf, min_cost, hit), _|{
       ising.inf_anneal();
+      if step % RECOMPUTE_INTERVAL == 0{
+        ising.init_cost();
+      }
       step += 1;
       if ising.cost() < min_cost - RECORD_EPS{
         (ising.config_to_bitvec(), ising.cost(), step)
@@ -82,24 +97,62 @@ pub fn high_temp_theoretical_perturbation_naive<I:Ising>(
 
 pub fn stationary_finite_temperature_optimise<I:Ising>(
   ising: &mut I,
-  max_steps:usize,
-  temperature:f64
-  )->(BitVec, f64, usize){
-  let mut step = 0;
-  (0..max_steps).fold(
-    (ising.config_to_bitvec(), ising.cost(), 0),
-    |(min_conf, min_cost, hit), _|{
-      ising.anneal(temperature);
-      if step % RECOMPUTE_INTERVAL == 0{
-        ising.init_cost();
+  mut max_steps:usize,
+  mut temperature:f64,
+  checkpoint_file_opt:Option<&PathBuf>,
+  checkpoint_interval:usize,
+  resume_opt:Option<CheckpointState>
+  )->Result<(BitVec, f64, usize)>{
+  let bk_file = if let Some(checkpoint_file) = checkpoint_file_opt{
+    let mut s = checkpoint_file.clone().into_os_string();
+    s.push("bk");
+    Some(PathBuf::from(s))
+  } else {
+    None
+  };
+  let mut best_conf:BitVec;
+  let mut best_cost:f64;
+  let init_step:usize;
+  let mut hit:usize;
+  match resume_opt {
+    Some(resume) => {
+      best_conf   = resume.best_conf;
+      best_cost   = ising.config_cost(&best_conf);
+      hit         = resume.hit;
+      init_step   = resume.step;
+      max_steps   = resume.max_steps;
+      temperature = resume.temperature;
+    } 
+    None =>{
+      best_conf = ising.config_to_bitvec();
+      best_cost = ising.cost();
+      init_step = 0;
+      hit = 0;
       }
-      step += 1;
-      if ising.cost() < min_cost - RECORD_EPS{
-        (ising.config_to_bitvec(), ising.cost(), step)
-      } else {
-        (min_conf, min_cost, hit)
+  }
+  // to print the right value of steps done into the file, we add 1 
+  #[cfg(debug_assertions)]
+  println!("before first anneal: {}", 
+    serde_json::to_string(ising.non_mut_get_rng())?);
+  for step in init_step+1..=max_steps{
+    ising.anneal(temperature);
+    if step % RECOMPUTE_INTERVAL == 0{
+      ising.init_cost();
+    }
+    if ising.cost() < best_cost - RECORD_EPS{
+      ising.init_cost();
+      best_conf = ising.config_to_bitvec();
+      best_cost = ising.cost();
+      hit = step;
+    }
+    if let Some(checkpoint_file) = checkpoint_file_opt{
+      if checkpoint_interval > 0 && step % checkpoint_interval == 0{
+        checkpoint(checkpoint_file, bk_file.as_ref(), ising, step, 
+          max_steps, temperature, &best_conf, hit)?;
       }
-    })
+    }
+  }
+  Ok((best_conf, best_cost, hit))
 }
 
 pub fn stationary_finite_temperature_hit<I:Ising>(
