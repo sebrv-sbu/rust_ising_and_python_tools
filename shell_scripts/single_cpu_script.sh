@@ -14,24 +14,28 @@ shift
   echo "single_cpu_script: $ising_file_name does not exist" >&2; exit 1
 }
 
-
+checkpointing=0;
 flags=()
-while getopts ":r:T:N:n:t:E:M:" opt; do 
+while getopts ":r:T:N:n:t:E:M:c:" opt; do 
   case "$opt" in 
-    r) CODEDIR="$OPTARG"                      ;;
-    T) flags+=(-T "$OPTARG"); T="$OPTARG"     ;;
-    N) flags+=(-r "$OPTARG")                  ;;
-    n) flags+=(-n "$OPTARG"); steps="$OPTARG" ;;
-    t) ISINGTMPDIR="$OPTARG"                  ;;
-    E) ERR_AND_WARNING_DIR="$OPTARG"          ;;
-    M) MERGEFILE="$OPTARG"                    ;;
+    r) CODEDIR="$OPTARG"                        ;;
+    T) flags+=(-T "$OPTARG"); T="$OPTARG"       ;;
+    N) flags+=(-r "$OPTARG")                    ;;
+    n) flags+=(-n "$OPTARG"); steps="$OPTARG"   ;;
+    c) checkpointing=1; CHECKPOINTDIR="$OPTARG" ;;
+    t) ISINGTMPDIR="$OPTARG"                    ;;
+    E) ERR_AND_WARNING_DIR="$OPTARG"            ;;
+    M) MERGEFILE="$OPTARG"                      ;;
     :) echo "option -$OPTARG requires an argument" >&2; usage ;;
     \?) echo "unknown option: -$OPTARG" >&2; usage ;;
   esac
 done
-
+if [[ checkpointing -eq 1 ]]; then
+  checkpoint_file=$CHECKPOINTDIR/cp_${SLURM_PROCID}_${T}
+  flags+=(-c "$checkpoint_file" --checkpoint_interval 200000000000)
+fi
 #Do not modify unless the rust ising directory is renamed for some odd reason
-RUSTDIR=$CODEDIR/rust_ising/
+RUSTDIR=$CODEDIR/rust_ising
 BINARYDIR=$RUSTDIR/target/release
 BINARY=$BINARYDIR/rust_ising
 

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name="lt1_d1"
+#SBATCH --job-name="l1_d1_3d"
 #SBATCH --partition="long-96core"
 #SBATCH --nodes=6
 #SBATCH --ntasks=576
@@ -17,7 +17,7 @@ module load python
 
 cd $RUSTDIR
 
-DIM=2
+DIM=3
 cargo clean
 ISING_DIM=$DIM RUSTFLAGS="-C target-cpu=native" cargo build --release
 
@@ -35,18 +35,20 @@ SINGLECPU=$SCRIPTDIR/single_cpu_script.sh
 BENCHMARK=$SCRIPTDIR/benchmark.sh
 
 #Modify accordingly
-ISINGDIR="/gpfs/scratch/sebramirezvi/ising/theoretical/6x6_low_temp"
+ISINGDIR="/gpfs/scratch/sebramirezvi/ising/theoretical/4x4x4"
 ERR_AND_WARNING=$ISINGDIR/err_output
 ISINGTMPDIR=$ISINGDIR/tmp
+ISINGCHECKPOINTDIR=$ISINGDIR/checkpoints
 ERR_AND_WARNING_DIR=$ISINGDIR/proc_errs
 mkdir -p $ERR_AND_WARNING_DIR
 mkdir -p $ISINGTMPDIR
+mkdir -p $ISINGCHECKPOINTDIR
 
 cd $ISINGDIR
 #Modify to your specifications
-ISINGFILE=$ISINGDIR/inst6x6
+ISINGFILE=$ISINGDIR/inst_4x4x4
 
-TEMPS=(3e-5 1e-5 3e-4 1e-4 3e-3 1e-3)
+TEMPS=(1.8e-1 4.1e0 4.6e0 5e0 6e0 6.8e0)
 
 
 for T in "${TEMPS[@]}"; do
@@ -62,8 +64,8 @@ for T in "${TEMPS[@]}"; do
    | tail -n 1 \
    | awk -F '[ ,]+' '{ print $1 }')
 
-  if below $steps 1000000; then
-    steps=1000000
+  if below $steps 200000000000; then
+    steps=200000000000
   fi
 
   if above "$steps" 2.8e12; then
@@ -74,6 +76,7 @@ for T in "${TEMPS[@]}"; do
     srun --exact --ntasks=96 --mem-per-cpu=2G \
       "$SINGLECPU" "$ISINGFILE" \
       -r "$CODEDIR" -T "$T" -n "$steps" -N "4294967295" -t "$ISINGTMPDIR" \
-      -E "$ERR_AND_WARNING_DIR" -M "$ISINGDIR/final_output_T_${T}"&
+      -E "$ERR_AND_WARNING_DIR" -M "$ISINGDIR/final_output_T_${T}" \
+      -c "$ISINGCHECKPOINTDIR"&
 done
 wait
